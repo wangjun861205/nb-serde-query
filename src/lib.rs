@@ -310,6 +310,14 @@ impl serde::Serializer for &mut Serializer {
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
+        while let Some(c) = self.output.pop() {
+            if c == '&' {
+                break;
+            }
+        }
+        if self.output.is_empty() {
+            self.is_first = true;
+        }
         Ok(())
     }
 
@@ -464,6 +472,23 @@ mod tests {
                 limit: 10,
                 offset: 0,
             }),
+        };
+        println!("{}", to_string(&s).unwrap());
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Empty {
+        a: Option<String>,
+        b: Option<i32>,
+        c: Option<Array<String>>,
+    }
+
+    #[test]
+    fn test_serialize_empty() {
+        let s = Empty {
+            a: None,
+            b: None,
+            c: None,
         };
         println!("{}", to_string(&s).unwrap());
     }
