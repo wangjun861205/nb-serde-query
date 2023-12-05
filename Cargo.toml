@@ -1,6 +1,6 @@
 [package]
 name = "nb-serde-query"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "serialize and deserialize query string in url"
 license = "MIT"
@@ -9,5 +9,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.75"
+base64 = "0.21.5"
+hex = "0.4.3"
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"

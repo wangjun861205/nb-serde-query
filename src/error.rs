@@ -1,4 +1,5 @@
 use serde::de::Error as DeError;
+use serde::ser::Error as SerError;
 use std::{error::Error as StdError, fmt::Display};
 
 #[derive(Debug)]
@@ -18,6 +19,18 @@ impl Error {
 
 impl DeError for Error {
     fn custom<T: std::fmt::Display>(msg: T) -> Self {
+        Error {
+            message: msg.to_string(),
+            cause: None,
+        }
+    }
+}
+
+impl SerError for Error {
+    fn custom<T>(msg: T) -> Self
+    where
+        T: Display,
+    {
         Error {
             message: msg.to_string(),
             cause: None,
