@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'nb-query'",
+            "name": "Debug executable 'nb-serde-query'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=nb-query",
-                    "--package=nb-query"
+                    "--bin=nb-serde-query",
+                    "--package=nb-serde-query"
                 ],
                 "filter": {
-                    "name": "nb-query",
+                    "name": "nb-serde-query",
                     "kind": "bin"
                 }
             },
@@ -30,11 +30,11 @@
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=nb-query",
-                    "--package=nb-query"
+                    "--bin=nb-serde-query",
+                    "--package=nb-serde-query"
                 ],
                 "filter": {
-                    "name": "nb-query",
+                    "name": "nb-serde-query",
                     "kind": "bin"
                 }
             },
