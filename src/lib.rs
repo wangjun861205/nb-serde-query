@@ -4,7 +4,7 @@ pub mod utils;
 use crate::error::Error;
 use base64::prelude::*;
 use serde::{
-    de::{DeserializeOwned, MapAccess},
+    de::{DeserializeOwned, MapAccess, SeqAccess},
     ser::{
         SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant, SerializeTuple,
         SerializeTupleStruct, SerializeTupleVariant,
@@ -64,6 +64,8 @@ where
 pub struct Serializer {
     is_first: bool,
     output: String,
+    curr_key: Option<String>,
+    is_first_elem_of_seq: bool,
 }
 
 impl Serializer {
@@ -71,6 +73,8 @@ impl Serializer {
         Self {
             is_first: true,
             output: String::new(),
+            curr_key: None,
+            is_first_elem_of_seq: false,
         }
     }
 }
@@ -107,11 +111,28 @@ impl SerializeSeq for &mut Serializer {
     type Ok = ();
     type Error = Error;
 
-    fn serialize_element<T>(&mut self, _value: &T) -> Result<(), Self::Error>
+    fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
         T: ?Sized + Serialize,
     {
-        Ok(())
+        if self.curr_key.is_none() {
+            return Err(Error::new("empty key for sequence", None));
+        }
+        let key = self.curr_key.clone().unwrap();
+        if self.is_first_elem_of_seq {
+            while let Some(c) = self.output.pop() {
+                if c == '&' {
+                    break;
+                }
+            }
+            self.is_first_elem_of_seq = false;
+        }
+        if !self.is_first {
+            self.output.push('&');
+        }
+        self.output.push_str(&key);
+        self.output.push('=');
+        value.serialize(&mut **self)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
@@ -131,6 +152,7 @@ impl SerializeStruct for &mut Serializer {
     where
         T: Serialize,
     {
+        self.curr_key = Some(key.to_string());
         if !self.is_first {
             self.output.push('&');
         }
@@ -322,6 +344,7 @@ impl serde::Serializer for &mut Serializer {
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
+        self.is_first_elem_of_seq = true;
         Ok(self)
     }
 
@@ -423,9 +446,9 @@ impl serde::Serializer for &mut Serializer {
 use serde::de::Visitor;
 use std::collections::HashMap;
 pub struct Deserializer {
-    m: HashMap<String, String>,
+    m: HashMap<String, Vec<String>>,
     curr_key: Option<String>,
-    curr_val: Option<String>,
+    curr_val: Option<Vec<String>>,
     fields: Vec<String>,
 }
 
@@ -437,7 +460,12 @@ impl Deserializer {
             .try_fold(HashMap::new(), |mut m, mut p| {
                 let key = p.next().ok_or(Error::new("invalid key", None))?;
                 let val = p.next().ok_or(Error::new("invalid value", None))?;
-                m.insert(key.to_string(), val.to_string());
+                if p.next().is_some() {
+                    return Err(Error::new("invalid pair", None));
+                }
+                m.entry(key.to_string())
+                    .or_insert(Vec::new())
+                    .push(val.to_string());
                 Ok(m)
             })?;
         Ok(Self {
@@ -455,11 +483,6 @@ impl<'de> MapAccess<'de> for Deserializer {
     where
         K: serde::de::DeserializeSeed<'de>,
     {
-        // if let Some(k) = self.m.keys().next() {
-        //     self.curr_key = Some(k.clone());
-        //     return seed.deserialize(self).map(Some);
-        // }
-        // Ok(None)
         if let Some(k) = self.fields.pop() {
             self.curr_key = Some(k);
             return seed.deserialize(self).map(Some);
@@ -477,6 +500,29 @@ impl<'de> MapAccess<'de> for Deserializer {
             return seed.deserialize(self);
         }
         seed.deserialize(self)
+    }
+}
+
+impl<'de> SeqAccess<'de> for Deserializer {
+    type Error = Error;
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
+    where
+        T: serde::de::DeserializeSeed<'de>,
+    {
+        if let Some(vals) = &mut self.curr_val {
+            if vals.is_empty() {
+                return Ok(None);
+            }
+            let val = vals.remove(0);
+            let mut next_deserializer = Deserializer {
+                m: self.m.clone(),
+                curr_key: None,
+                curr_val: Some(vec![val]),
+                fields: vec![],
+            };
+            return seed.deserialize(&mut next_deserializer).map(Some);
+        }
+        Ok(None)
     }
 }
 
@@ -523,6 +569,8 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
             self.curr_val
                 .take()
                 .ok_or(Error::new("no bool value", None))?
+                .first()
+                .ok_or(Error::new("no bool value", None))?
                 .parse()
                 .map_err(|e| Error::new("invalid bool literial", Some(Box::new(e))))?,
         )
@@ -536,6 +584,8 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
             self.curr_val
                 .take()
                 .ok_or(Error::new("no i32 value", None))?
+                .first()
+                .ok_or(Error::new("no i32 value", None))?
                 .parse()
                 .map_err(|e| Error::new("invalid i32 literial", Some(Box::new(e))))?,
         )
@@ -548,8 +598,37 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
         visitor.visit_string(
             self.curr_val
                 .take()
-                .ok_or(Error::new("no string value", None))?,
+                .ok_or(Error::new("no string value", None))?
+                .first()
+                .ok_or(Error::new("no string value", None))?
+                .clone(),
         )
+    }
+
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        if let Some(val) = self.curr_val.take() {
+            if val.is_empty() {
+                return visitor.visit_none();
+            }
+            let mut next_deserializer = Deserializer {
+                m: self.m.clone(),
+                curr_key: None,
+                curr_val: Some(val),
+                fields: vec![],
+            };
+            return visitor.visit_some(&mut next_deserializer);
+        }
+        visitor.visit_none()
+    }
+
+    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_seq(self)
     }
 
     fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
@@ -559,18 +638,34 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
         unimplemented!()
     }
 
-    fn deserialize_i8<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_i8(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no i8 value", None))?
+                .first()
+                .ok_or(Error::new("no i8 value", None))?
+                .parse()
+                .map_err(|e| Error::new("invalid i8 literal", Some(Box::new(e))))?,
+        )
     }
 
-    fn deserialize_i16<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_i16(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no i16 value", None))?
+                .first()
+                .ok_or(Error::new("no i16 value", None))?
+                .parse()
+                .map_err(|e| Error::new("invalid i16 literal", Some(Box::new(e))))?,
+        )
     }
 
     fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -610,28 +705,60 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
     where
         V: serde::de::Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_f32(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no f32 value", None))?
+                .first()
+                .ok_or(Error::new("no f32 value", None))?
+                .parse()
+                .map_err(|e| Error::new("invalid f32 literal", Some(Box::new(e))))?,
+        )
     }
 
     fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_f64(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no f64 value", None))?
+                .first()
+                .ok_or(Error::new("no f64 value", None))?
+                .parse()
+                .map_err(|e| Error::new("invalid f64 literal", Some(Box::new(e))))?,
+        )
     }
 
     fn deserialize_i128<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_i128(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no i128 value", None))?
+                .first()
+                .ok_or(Error::new("no i128 value", None))?
+                .parse()
+                .map_err(|e| Error::new("invalid i128 literal", Some(Box::new(e))))?,
+        )
     }
 
     fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_i64(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no i64 value", None))?
+                .first()
+                .ok_or(Error::new("no i64 value", None))?
+                .parse()
+                .map_err(|e| Error::new("invalid i64 literal", Some(Box::new(e))))?,
+        )
     }
 
     fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -652,25 +779,17 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
         unimplemented!()
     }
 
-    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        unimplemented!()
-    }
-
-    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        unimplemented!()
-    }
-
     fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_str(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no string value", None))?
+                .first()
+                .ok_or(Error::new("no string value", None))?,
+        )
     }
 
     fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
@@ -696,35 +815,75 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_u128(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no u128 value", None))?
+                .first()
+                .ok_or(Error::new("no u128 value", None))?
+                .parse()
+                .map_err(|e| Error::new("invalid u128 literal", Some(Box::new(e))))?,
+        )
     }
 
     fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_u16(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no u16 value", None))?
+                .first()
+                .ok_or(Error::new("no u16 value", None))?
+                .parse()
+                .map_err(|e| Error::new("invalid u16 literal", Some(Box::new(e))))?,
+        )
     }
 
     fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_u32(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no u32 value", None))?
+                .first()
+                .ok_or(Error::new("no u32 value", None))?
+                .parse()
+                .map_err(|e| Error::new("invalid u32 literal", Some(Box::new(e))))?,
+        )
     }
 
     fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_u64(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no u64 value", None))?
+                .first()
+                .ok_or(Error::new("no u64 value", None))?
+                .parse()
+                .map_err(|e| Error::new("invalid u64 literal", Some(Box::new(e))))?,
+        )
     }
 
     fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        unimplemented!()
+        visitor.visit_u8(
+            self.curr_val
+                .take()
+                .ok_or(Error::new("no u8 value", None))?
+                .first()
+                .ok_or(Error::new("no u8 value", None))?
+                .parse()
+                .map_err(|e| Error::new("invalid u8 literal", Some(Box::new(e))))?,
+        )
     }
 
     fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -751,7 +910,7 @@ mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct Pagination {
         limit: i32,
         offset: i32,
@@ -786,6 +945,19 @@ mod tests {
             })
             .unwrap()
         );
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct NormalVec {
+        ids: Vec<String>,
+    }
+
+    #[test]
+    fn test_serde_normal_vec() {
+        let v = NormalVec {
+            ids: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+        };
+        println!("{}", to_string(&v).unwrap());
     }
 
     #[test]
@@ -823,18 +995,30 @@ mod tests {
     struct De {
         name: String,
         age: i32,
-        // #[serde(flatten)]
         pagination: Pagination,
+        ids: Vec<i32>,
+        hobbies: Option<Vec<String>>,
+        op: Option<String>,
     }
 
     #[test]
     fn test_deserializer() {
-        let mut deserializer =
-            Deserializer::try_from_str("age=37&name=test&offset=0&limit=10").unwrap();
+        let mut deserializer = Deserializer::try_from_str(
+            "age=37&name=test&offset=0&limit=10&ids=1&ids=2&op=some&hobbies=moto&hobbies=code",
+        )
+        .unwrap();
         let de = De::deserialize(&mut deserializer).unwrap();
         assert!(de.name == "test");
         assert!(de.age == 37);
-        assert!(de.pagination.limit == 10);
-        assert!(de.pagination.offset == 0);
+        assert!(
+            de.pagination
+                == Pagination {
+                    limit: 10,
+                    offset: 0
+                }
+        );
+        assert!(de.ids == vec![1, 2]);
+        assert!(de.op == Some("some".into()));
+        assert!(de.hobbies == Some(vec!["moto".into(), "code".into()]));
     }
 }
