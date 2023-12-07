@@ -454,20 +454,18 @@ pub struct Deserializer {
 
 impl Deserializer {
     pub fn try_from_str(s: &str) -> Result<Self, Error> {
-        let m = s
-            .split('&')
-            .map(|p| p.split('='))
-            .try_fold(HashMap::new(), |mut m, mut p| {
+        let m = s.split('&').map(|p| p.split('=')).try_fold(
+            HashMap::new(),
+            |mut m: HashMap<String, Vec<String>>, mut p| {
                 let key = p.next().ok_or(Error::new("invalid key", None))?;
                 let val = p.next().ok_or(Error::new("invalid value", None))?;
                 if p.next().is_some() {
                     return Err(Error::new("invalid pair", None));
                 }
-                m.entry(key.to_string())
-                    .or_insert(Vec::new())
-                    .push(val.to_string());
+                m.entry(key.to_string()).or_default().push(val.to_string());
                 Ok(m)
-            })?;
+            },
+        )?;
         Ok(Self {
             m,
             curr_key: None,
@@ -668,21 +666,21 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
         )
     }
 
-    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_byte_buf<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
         unimplemented!()
     }
 
-    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_bytes<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
         unimplemented!()
     }
 
-    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_char<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
@@ -691,9 +689,9 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
 
     fn deserialize_enum<V>(
         self,
-        name: &'static str,
-        variants: &'static [&'static str],
-        visitor: V,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        _visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
@@ -761,7 +759,7 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
         )
     }
 
-    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_ignored_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
@@ -770,8 +768,8 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
 
     fn deserialize_newtype_struct<V>(
         self,
-        name: &'static str,
-        visitor: V,
+        _name: &'static str,
+        _visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
@@ -792,7 +790,7 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
         )
     }
 
-    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_tuple<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
@@ -801,9 +799,9 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
 
     fn deserialize_tuple_struct<V>(
         self,
-        name: &'static str,
-        len: usize,
-        visitor: V,
+        _name: &'static str,
+        _len: usize,
+        _visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
@@ -886,7 +884,7 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
         )
     }
 
-    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_unit<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
@@ -895,14 +893,22 @@ impl<'de> serde::Deserializer<'de> for &mut Deserializer {
 
     fn deserialize_unit_struct<V>(
         self,
-        name: &'static str,
-        visitor: V,
+        _name: &'static str,
+        _visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
         unimplemented!()
     }
+}
+
+pub fn from_str<T>(s: &str) -> Result<T, Error>
+where
+    for<'de> T: Deserialize<'de>,
+{
+    let mut deserializer = Deserializer::try_from_str(s)?;
+    T::deserialize(&mut deserializer)
 }
 
 #[cfg(test)]
