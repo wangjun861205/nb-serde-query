@@ -38,7 +38,7 @@ where
     }
 }
 
-pub fn to_string<T>(value: &T) -> Result<String, Error>
+pub fn to_string<T>(value: T) -> Result<String, Error>
 where
     T: Serialize,
 {
