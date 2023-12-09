@@ -1,3 +1,5 @@
+#[cfg(feature = "actix-web")]
+pub mod actix_web;
 pub mod error;
 pub mod utils;
 
@@ -62,21 +64,17 @@ where
 
 #[derive(Debug, Default)]
 pub struct Serializer {
-    is_first: bool,
     output: String,
     curr_key: Option<String>,
-    is_first_elem_of_seq: bool,
-    is_first_elem_of_struct: bool,
+    is_for_key: bool,
 }
 
 impl Serializer {
     pub fn new() -> Self {
         Self {
-            is_first: true,
             output: String::new(),
             curr_key: None,
-            is_first_elem_of_seq: false,
-            is_first_elem_of_struct: false,
+            is_for_key: false,
         }
     }
 }
@@ -89,10 +87,7 @@ impl SerializeMap for &mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        if !self.is_first {
-            self.output.push('&');
-        }
-        self.is_first = false;
+        self.is_for_key = true;
         key.serialize(&mut **self)
     }
 
@@ -100,7 +95,7 @@ impl SerializeMap for &mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        self.output.push('=');
+        self.is_for_key = false;
         value.serialize(&mut **self)
     }
 
@@ -117,23 +112,6 @@ impl SerializeSeq for &mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        if self.curr_key.is_none() {
-            return Err(Error::new("empty key for sequence", None));
-        }
-        let key = self.curr_key.clone().unwrap();
-        if self.is_first_elem_of_seq {
-            while let Some(c) = self.output.pop() {
-                if c == '&' {
-                    break;
-                }
-            }
-            self.is_first_elem_of_seq = false;
-        }
-        if !self.is_first {
-            self.output.push('&');
-        }
-        self.output.push_str(&key);
-        self.output.push('=');
         value.serialize(&mut **self)
     }
 
@@ -154,21 +132,8 @@ impl SerializeStruct for &mut Serializer {
     where
         T: Serialize,
     {
-        if self.is_first_elem_of_struct {
-            while let Some(c) = self.output.pop() {
-                if c == '&' {
-                    break;
-                }
-            }
-            self.is_first_elem_of_struct = false;
-        }
-        self.curr_key = Some(key.to_string());
-        if !self.is_first {
-            self.output.push('&');
-        }
-        self.is_first = false;
+        self.is_for_key = true;
         key.serialize(&mut **self)?;
-        self.output.push('=');
         value.serialize(&mut **self)
     }
 
@@ -189,12 +154,9 @@ impl SerializeStructVariant for &mut Serializer {
     where
         T: Serialize,
     {
-        if !self.is_first {
-            self.output.push('&');
-        }
-        self.is_first = false;
+        self.is_for_key = true;
         key.serialize(&mut **self)?;
-        self.output.push('=');
+        self.is_for_key = false;
         value.serialize(&mut **self)
     }
 
@@ -264,52 +226,173 @@ impl serde::Serializer for &mut Serializer {
     type SerializeTupleVariant = Self;
 
     fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for bool value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for i8 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_i16(self, v: i16) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for i16 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for i32 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for i64 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&BASE64_STANDARD.encode(v));
+        if self.is_for_key {
+            self.curr_key = Some(BASE64_STANDARD.encode(v));
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self.curr_key.as_ref().ok_or(Error::new(
+            format!("empty key for bytes value {:?}", v),
+            None,
+        ))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output
+            .push_str(&format!("{}={}", curr_key, BASE64_STANDARD.encode(v)));
         Ok(())
     }
 
     fn serialize_char(self, v: char) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for char value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for f32 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for f64 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_i128(self, v: i128) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for f128 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
@@ -342,19 +425,10 @@ impl serde::Serializer for &mut Serializer {
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        while let Some(c) = self.output.pop() {
-            if c == '&' {
-                break;
-            }
-        }
-        if self.output.is_empty() {
-            self.is_first = true;
-        }
         Ok(())
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        self.is_first_elem_of_seq = true;
         Ok(self)
     }
 
@@ -366,7 +440,19 @@ impl serde::Serializer for &mut Serializer {
     }
 
     fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(v);
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for str value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
@@ -375,7 +461,6 @@ impl serde::Serializer for &mut Serializer {
         _name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        self.is_first_elem_of_struct = true;
         Ok(self)
     }
 
@@ -384,9 +469,9 @@ impl serde::Serializer for &mut Serializer {
         _name: &'static str,
         _variant_index: u32,
         _variant: &'static str,
-        len: usize,
+        _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        self.serialize_map(Some(len))
+        Ok(self)
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
@@ -412,27 +497,87 @@ impl serde::Serializer for &mut Serializer {
     }
 
     fn serialize_u128(self, v: u128) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for u128 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_u16(self, v: u16) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for u16 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for u32 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_u64(self, v: u64) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for u64 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
     fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
-        self.output.push_str(&v.to_string());
+        if self.is_for_key {
+            self.curr_key = Some(v.to_string());
+            self.is_for_key = false;
+            return Ok(());
+        }
+        let curr_key = self
+            .curr_key
+            .as_ref()
+            .ok_or(Error::new(format!("empty key for u8 value {}", v), None))?;
+        if !self.output.is_empty() {
+            self.output.push('&');
+        }
+        self.output.push_str(&format!("{}={}", curr_key, v));
         Ok(())
     }
 
@@ -1066,5 +1211,19 @@ mod tests {
         assert!(
             s == "name=test&age=37&limit=10&offset=0&ids=1&ids=2&hobbies=moto&hobbies=code&op=some"
         )
+    }
+
+    #[test]
+    fn test_serialize_vector() {
+        #[derive(Debug, Serialize)]
+        pub struct Vector {
+            ids: Vec<String>,
+        }
+
+        let v = Vector {
+            ids: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+        };
+        let s = to_string(&v).unwrap();
+        assert!(s == "ids=1&ids=2&ids=3");
     }
 }
