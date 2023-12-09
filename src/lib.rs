@@ -66,6 +66,7 @@ pub struct Serializer {
     output: String,
     curr_key: Option<String>,
     is_first_elem_of_seq: bool,
+    is_first_elem_of_struct: bool,
 }
 
 impl Serializer {
@@ -75,6 +76,7 @@ impl Serializer {
             output: String::new(),
             curr_key: None,
             is_first_elem_of_seq: false,
+            is_first_elem_of_struct: false,
         }
     }
 }
@@ -152,6 +154,14 @@ impl SerializeStruct for &mut Serializer {
     where
         T: Serialize,
     {
+        if self.is_first_elem_of_struct {
+            while let Some(c) = self.output.pop() {
+                if c == '&' {
+                    break;
+                }
+            }
+            self.is_first_elem_of_struct = false;
+        }
         self.curr_key = Some(key.to_string());
         if !self.is_first {
             self.output.push('&');
@@ -363,9 +373,10 @@ impl serde::Serializer for &mut Serializer {
     fn serialize_struct(
         self,
         _name: &'static str,
-        len: usize,
+        _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        self.serialize_map(Some(len))
+        self.is_first_elem_of_struct = true;
+        Ok(self)
     }
 
     fn serialize_struct_variant(
@@ -1026,5 +1037,34 @@ mod tests {
         assert!(de.ids == vec![1, 2]);
         assert!(de.op == Some("some".into()));
         assert!(de.hobbies == Some(vec!["moto".into(), "code".into()]));
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Se {
+        name: String,
+        age: i32,
+        pagination: Pagination,
+        ids: Vec<i32>,
+        hobbies: Option<Vec<String>>,
+        op: Option<String>,
+    }
+
+    #[test]
+    fn test_to_string() {
+        let se = Se {
+            name: "test".into(),
+            age: 37,
+            pagination: Pagination {
+                limit: 10,
+                offset: 0,
+            },
+            ids: vec![1, 2],
+            hobbies: Some(vec!["moto".into(), "code".into()]),
+            op: Some("some".into()),
+        };
+        let s = to_string(&se).unwrap();
+        assert!(
+            s == "name=test&age=37&limit=10&offset=0&ids=1&ids=2&hobbies=moto&hobbies=code&op=some"
+        )
     }
 }
